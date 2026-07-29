@@ -9,6 +9,8 @@ local rolePickerFrame
 local compareBtn
 local advancedFrame
 local advRows = {}
+local shareFrame
+local allSpecsCheck
 
 local function UpdateMinimapButtonPosition()
     if not OctoPawnMinimapBtn then return end
@@ -70,7 +72,7 @@ delayFrame:SetScript("OnEvent", function()
 end)
 
 configFrame = CreateFrame("Frame", nil, UIParent)
-configFrame:SetWidth(420); configFrame:SetHeight(480)
+configFrame:SetWidth(420); configFrame:SetHeight(500)
 configFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
 configFrame:SetBackdrop({
     bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
@@ -90,7 +92,7 @@ local closeBtn = CreateFrame("Button", nil, configFrame, "UIPanelCloseButton")
 closeBtn:SetPoint("TOPRIGHT", configFrame, "TOPRIGHT", -4, -4)
 scrollFrame = CreateFrame("ScrollFrame", "OctoPawnScrollFrame", configFrame, "UIPanelScrollFrameTemplate")
 scrollFrame:SetPoint("TOPLEFT", configFrame, "TOPLEFT", 20, -50)
-scrollFrame:SetPoint("BOTTOMRIGHT", configFrame, "BOTTOMRIGHT", -150, 60)
+scrollFrame:SetPoint("BOTTOMRIGHT", configFrame, "BOTTOMRIGHT", -150, 70)
 scrollFrame:EnableMouseWheel(true)
 scrollFrame:SetScript("OnMouseWheel", function()
     local current = this:GetVerticalScroll()
@@ -157,10 +159,138 @@ end)
 MakeCmdButton("Advanced", -187, function()
     if ToggleAdvancedFrame then ToggleAdvancedFrame() end
 end)
+MakeCmdButton("Share", -220, function()
+    if ToggleShareFrame then ToggleShareFrame() end
+end)
+
+-------------------------------------------------
+-- All-specs checkbox
+-------------------------------------------------
+allSpecsCheck = CreateFrame("CheckButton", "OctoPawnAllSpecsCheck", configFrame, "UICheckButtonTemplate")
+allSpecsCheck:SetWidth(24); allSpecsCheck:SetHeight(24)
+allSpecsCheck:SetPoint("TOPRIGHT", configFrame, "TOPRIGHT", -25, -252)
+allSpecsCheck:SetScript("OnClick", function()
+    if not OctoPawnDB then OctoPawnDB = {} end
+    OctoPawnDB.showAllSpecs = this:GetChecked() and true or false
+end)
+local allSpecsLabel = configFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+allSpecsLabel:SetPoint("RIGHT", allSpecsCheck, "LEFT", -2, 0)
+allSpecsLabel:SetText("All specs on tips")
+
+local function SyncAllSpecsCheck()
+    if not allSpecsCheck then return end
+    if OctoPawnDB and OctoPawnDB.showAllSpecs then
+        allSpecsCheck:SetChecked(1)
+    else
+        allSpecsCheck:SetChecked(0)
+    end
+end
 
 function OctoPawn_RefreshCompareButton() UpdateCompareButtonText() end
 
--- Advanced soft-cap UI defined after helpers
+-------------------------------------------------
+-- Share frame (import / export sparse)
+-------------------------------------------------
+local function EnsureShareFrame()
+    if shareFrame then return end
+    shareFrame = CreateFrame("Frame", "OctoPawnShareFrame", UIParent)
+    shareFrame:SetWidth(420); shareFrame:SetHeight(200)
+    shareFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 40)
+    shareFrame:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        tile = true, tileSize = 32, edgeSize = 32,
+    })
+    shareFrame:SetFrameStrata("DIALOG")
+    shareFrame:EnableMouse(true)
+    shareFrame:SetMovable(true)
+    shareFrame:RegisterForDrag("LeftButton")
+    shareFrame:SetScript("OnDragStart", function() this:StartMoving() end)
+    shareFrame:SetScript("OnDragStop", function() this:StopMovingOrSizing() end)
+    shareFrame:Hide()
+
+    local st = shareFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+    st:SetPoint("TOP", shareFrame, "TOP", 0, -14)
+    st:SetText("Share Weights")
+
+    local close = CreateFrame("Button", nil, shareFrame, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", shareFrame, "TOPRIGHT", -4, -4)
+
+    local hint = shareFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    hint:SetPoint("TOP", st, "BOTTOM", 0, -4)
+    hint:SetText("Sparse export — only stats that differ from role defaults")
+
+    local box = CreateFrame("EditBox", "OctoPawnShareEditBox", shareFrame)
+    box:SetPoint("TOPLEFT", shareFrame, "TOPLEFT", 20, -50)
+    box:SetPoint("BOTTOMRIGHT", shareFrame, "BOTTOMRIGHT", -20, 50)
+    box:SetMultiLine(true)
+    box:SetAutoFocus(false)
+    box:SetFontObject("GameFontHighlightSmall")
+    box:SetMaxLetters(2500)
+    box:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 8, edgeSize = 12,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    box:SetBackdropColor(0, 0, 0, 0.8)
+    box:SetBackdropBorderColor(0.7, 0.7, 0.7, 1)
+    box:SetTextInsets(6, 6, 6, 6)
+    box:SetScript("OnEscapePressed", function() this:ClearFocus() end)
+    shareFrame.edit = box
+
+    local exportBtn = CreateFrame("Button", nil, shareFrame, "UIPanelButtonTemplate")
+    exportBtn:SetWidth(100); exportBtn:SetHeight(26)
+    exportBtn:SetPoint("BOTTOMLEFT", shareFrame, "BOTTOMLEFT", 30, 14)
+    exportBtn:SetText("Export")
+    exportBtn:SetScript("OnClick", function()
+        if not OctoPawn_ExportWeightsSparse then return end
+        local s, err = OctoPawn_ExportWeightsSparse()
+        if not s then
+            DEFAULT_CHAT_FRAME:AddMessage("|cFFFF0000OctoPawn: Export failed — " .. tostring(err) .. "|r")
+            return
+        end
+        shareFrame.edit:SetText(s)
+        shareFrame.edit:HighlightText()
+        shareFrame.edit:SetFocus()
+        DEFAULT_CHAT_FRAME:AddMessage("|cFF00FF00OctoPawn: Exported. Ctrl+C to copy.|r")
+    end)
+
+    local importBtn = CreateFrame("Button", nil, shareFrame, "UIPanelButtonTemplate")
+    importBtn:SetWidth(100); importBtn:SetHeight(26)
+    importBtn:SetPoint("BOTTOMRIGHT", shareFrame, "BOTTOMRIGHT", -30, 14)
+    importBtn:SetText("Import")
+    importBtn:SetScript("OnClick", function()
+        local text = shareFrame.edit:GetText() or ""
+        if not OctoPawn_ImportWeightsSparse then return end
+        local ok, info = OctoPawn_ImportWeightsSparse(text)
+        if not ok then
+            DEFAULT_CHAT_FRAME:AddMessage("|cFFFF0000OctoPawn: Import failed — " .. tostring(info) .. "|r")
+            return
+        end
+        DEFAULT_CHAT_FRAME:AddMessage("|cFF00FF00OctoPawn: Imported weights for " .. tostring(info) .. " (custom).|r")
+        shareFrame:Hide()
+        if configFrame and configFrame:IsShown() then
+            WipeEditBoxes()
+            BuildEditBoxes()
+        end
+        if OctoPawn_UpdatePlayerPaperScore then OctoPawn_UpdatePlayerPaperScore() end
+    end)
+end
+
+function ToggleShareFrame()
+    EnsureShareFrame()
+    if shareFrame:IsShown() then
+        shareFrame:Hide()
+    else
+        shareFrame.edit:SetText("")
+        shareFrame:Show()
+    end
+end
+
+-------------------------------------------------
+-- Advanced soft-cap UI
+-------------------------------------------------
 local function EnsureAdvancedFrame()
     if advancedFrame then return end
     advancedFrame = CreateFrame("Frame", "OctoPawnAdvancedFrame", UIParent)
@@ -179,12 +309,12 @@ local function EnsureAdvancedFrame()
     advancedFrame:SetScript("OnDragStop", function() this:StopMovingOrSizing() end)
     advancedFrame:Hide()
     local at = advancedFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-    at:SetPoint("TOP", 0, -14); at:SetText("Advanced — Soft Caps")
+    at:SetPoint("TOP", advancedFrame, "TOP", 0, -14); at:SetText("Advanced — Soft Caps")
     local close = CreateFrame("Button", nil, advancedFrame, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", -4, -4)
     local hint = advancedFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     hint:SetPoint("TOP", at, "BOTTOM", 0, -4)
-    hint:SetText("Empty Soft Cap = no DR. Post Scale default 0.5")
+    hint:SetText("Soft Cap 0 = no DR for that stat")
 
     local hdr1 = advancedFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     hdr1:SetPoint("TOPLEFT", advancedFrame, "TOPLEFT", 24, -48)
@@ -214,13 +344,10 @@ local function EnsureAdvancedFrame()
             local postVal = tonumber(row.post:GetText())
             if not postVal then postVal = 0.5 end
             if softVal > 0 then
-                -- custom / enabled DR
                 OctoPawnDB.dr[row.stat] = { softCap = softVal, postScale = postVal }
             elseif defaults[row.stat] then
-                -- soft 0 on a built-in stat = explicitly disable that default DR
                 OctoPawnDB.dr[row.stat] = { softCap = 0, postScale = postVal }
             end
-            -- soft 0 and no built-in = leave unset (linear)
         end
         DEFAULT_CHAT_FRAME:AddMessage("|cFF00FF00OctoPawn: Soft caps saved.|r")
     end)
@@ -231,7 +358,7 @@ local function EnsureAdvancedFrame()
         if not OctoPawnDB then OctoPawnDB = {} end
         OctoPawnDB.dr = {}
         local _, row
-        for _, row in ipairs(advRows) do row.soft:SetText(""); row.post:SetText("") end
+        for _, row in ipairs(advRows) do row.soft:SetText("0"); row.post:SetText("0") end
         DEFAULT_CHAT_FRAME:AddMessage("|cFFFF9900OctoPawn: Soft caps cleared.|r")
     end)
 end
@@ -248,7 +375,6 @@ local function BuildAdvancedRows()
     local statsMap = {}
     for s in pairs(weights) do statsMap[s] = true end
     for s in pairs(defaults) do statsMap[s] = true end
-    -- If still empty, pull every stat from all class/role tables
     if not next(statsMap) and defaultWeights then
         for _, classTable in pairs(defaultWeights) do
             if type(classTable) == "table" then
@@ -283,14 +409,10 @@ local function BuildAdvancedRows()
         post:SetAutoFocus(false); post:SetFontObject("GameFontHighlight"); post:SetJustifyH("CENTER")
         post:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", tile = true, tileSize = 8, edgeSize = 12 })
         post:SetBackdropColor(0.1, 0.1, 0.1, 0.9); post:SetBackdropBorderColor(0.7, 0.7, 0.7, 1)
-        -- Player override, else built-in default DR, else 0
         local dr = nil
         if OctoPawn_GetDR then
             dr = OctoPawn_GetDR(stat)
-        elseif OctoPawnDB and OctoPawnDB.dr and OctoPawnDB.dr[stat] then
-            dr = OctoPawnDB.dr[stat]
         end
-        -- If player explicitly set 0, GetDR returns nil — show 0
         if OctoPawnDB and OctoPawnDB.dr and OctoPawnDB.dr[stat] and tonumber(OctoPawnDB.dr[stat].softCap) == 0 then
             soft:SetText("0")
             post:SetText(tostring(OctoPawnDB.dr[stat].postScale or 0))
@@ -344,7 +466,7 @@ local function SaveWeights()
     OctoPawnDB.useCustom = true
 end
 
-local function BuildEditBoxes()
+function BuildEditBoxes()
     local playerClass = OctoPawn_GetClass and OctoPawn_GetClass() or "?"
     local role = (OctoPawnDB and OctoPawnDB.role) or "Default"
     local suffix = (OctoPawnDB and OctoPawnDB.useCustom) and " (custom)" or ""
@@ -356,7 +478,9 @@ local function BuildEditBoxes()
             local value = saved[stat]; if value == nil then value = defaults[stat] or 1.0 end
             box:SetText(tostring(value))
         end
-        UpdateCompareButtonText(); return
+        UpdateCompareButtonText()
+        SyncAllSpecsCheck()
+        return
     end
     local saved = (OctoPawnDB and OctoPawnDB.weights) or {}
     local defaults = OctoPawn_GetDefaultWeights and OctoPawn_GetDefaultWeights() or {}
@@ -415,6 +539,7 @@ local function BuildEditBoxes()
         box:SetScript("OnEnterPressed", function() FocusNextBox(this) end)
     end
     UpdateCompareButtonText()
+    SyncAllSpecsCheck()
 end
 
 local saveBtn = CreateFrame("Button", nil, configFrame, "UIPanelButtonTemplate")
@@ -429,7 +554,7 @@ configFrame:SetScript("OnHide", function() SaveWeights() end)
 
 function ToggleConfigFrame()
     if configFrame:IsShown() then configFrame:Hide()
-    else BuildEditBoxes(); UpdateCompareButtonText(); configFrame:Show() end
+    else BuildEditBoxes(); UpdateCompareButtonText(); SyncAllSpecsCheck(); configFrame:Show() end
 end
 
 function OctoPawn_ShowRolePicker()
@@ -486,7 +611,6 @@ function OctoPawn_ShowRolePicker()
     end
     if table.getn(roles) == 0 then
         table.insert(roles, "Default")
-        DEFAULT_CHAT_FRAME:AddMessage("|cFFFF9900OctoPawn: No roles for " .. tostring(class) .. ". Check Defaults load.|r")
     end
 
     rolePickerFrame.title:SetText("OctoPawn - " .. tostring(class))
@@ -505,9 +629,6 @@ function OctoPawn_ShowRolePicker()
         btn:SetScript("OnClick", function()
             if OctoPawn_ApplyRole then OctoPawn_ApplyRole(this.roleName, false) end
             rolePickerFrame:Hide()
-            if OctoPawn_WipeConfigUI then
-                -- only wipe boxes, keep frame
-            end
             WipeEditBoxes()
             if configFrame and configFrame:IsShown() then BuildEditBoxes() end
         end)

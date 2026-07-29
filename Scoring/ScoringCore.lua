@@ -2,7 +2,6 @@
 -- OctoPawn Scoring/ScoringCore.lua
 -------------------------------------------------
 
--- Built-in soft caps (shown in Advanced; overridden by OctoPawnDB.dr)
 local DEFAULT_DR = {
     HIT                 = { softCap = 6,  postScale = 0.35 },
     ["SPELL HIT"]       = { softCap = 10, postScale = 0.30 },
@@ -20,7 +19,6 @@ local DEFAULT_DR = {
     ["ARMOR PENETRATION"] = { softCap = 30, postScale = 0.45 },
 }
 
--- Expose for Advanced UI
 function OctoPawn_GetDefaultDR()
     return DEFAULT_DR
 end
@@ -28,7 +26,6 @@ end
 function OctoPawn_GetDR(stat)
     if OctoPawnDB and OctoPawnDB.dr and OctoPawnDB.dr[stat] then
         local d = OctoPawnDB.dr[stat]
-        -- softCap 0 means player explicitly disabled DR for this stat
         if d.softCap ~= nil and tonumber(d.softCap) == 0 then
             return nil
         end
@@ -200,14 +197,103 @@ function OctoPawn_PrintBreakdown(title, score, results)
     DEFAULT_CHAT_FRAME:AddMessage("|cFF00FF00Total: " .. string.format("%.1f", score) .. "|r")
 end
 
+local function FormatSpecDiff(diff)
+    if diff > 0.05 then
+        return string.format("|cFF00FF00(+%.1f)|r", diff)
+    elseif diff < -0.05 then
+        return string.format("|cFFFF0000(%.1f)|r", diff)
+    else
+        return "|cFFAAAAAA(+0.0)|r"
+    end
+end
+
+-- Short labels for multi-slot compares (rings/trinkets/weapons)
+local SHORT_SLOT_LABEL = {
+    [11] = "1",   -- Finger 1
+    [12] = "2",   -- Finger 2
+    [13] = "1",   -- Trinket 1
+    [14] = "2",   -- Trinket 2
+    [16] = "MH",  -- Main Hand
+    [17] = "OH",  -- Off Hand
+}
+
+-- Return list of {score, label} for every equipped item in the slot set
+local function EquippedScoresForSlots(slots, weights)
+    if not slots then return nil end
+    local tip = GetScanTooltip()
+    local list = {}
+    local s
+    for _, s in ipairs(slots) do
+        if GetInventoryItemLink("player", s) then
+            tip:SetOwner(UIParent, "ANCHOR_NONE")
+            tip:ClearLines()
+            tip.octoPawnScored = nil
+            tip:SetInventoryItem("player", s)
+            tip:Show()
+            local eqScore = OctoPawn_ScoreTooltip(tip, weights)
+            tip:Hide()
+            local label = SHORT_SLOT_LABEL[s]
+            if not label then
+                -- single-slot or fallback: omit label prefix
+                label = nil
+            end
+            table.insert(list, { score = eqScore or 0, label = label, slot = s })
+        end
+    end
+    if table.getn(list) == 0 then return nil end
+    return list
+end
+
+local function AddAllSpecsToTooltip(tooltip)
+    local class = OctoPawn_GetClass and OctoPawn_GetClass()
+    if not class then return end
+    local roles = OctoPawn_GetRolesForClass and OctoPawn_GetRolesForClass(class) or {}
+    local currentRole = OctoPawnDB and OctoPawnDB.role
+    local slots = OctoPawn_GetCompareSlotsFromTooltip and OctoPawn_GetCompareSlotsFromTooltip(tooltip)
+    local compareOn = not (OctoPawnDB and OctoPawnDB.compareEnabled == false)
+
+    local ri
+    for ri = 1, table.getn(roles) do
+        local role = roles[ri]
+        local weights = OctoPawn_GetWeightsForRole and OctoPawn_GetWeightsForRole(class, role) or {}
+        local score = OctoPawn_ScoreTooltip(tooltip, weights) or 0
+        local line = string.format("%s: |cFFFFFFFF%.1f|r", role, score)
+        if compareOn and slots then
+            local eqList = EquippedScoresForSlots(slots, weights)
+            if eqList then
+                local ei
+                for ei = 1, table.getn(eqList) do
+                    local eq = eqList[ei]
+                    local diffStr = FormatSpecDiff(score - eq.score)
+                    if eq.label then
+                        -- multi-slot: " (+1.2)1 " or " (+0.5)MH "
+                        line = line .. " " .. diffStr .. eq.label
+                    else
+                        line = line .. " " .. diffStr
+                    end
+                end
+            end
+        end
+        if currentRole and role == currentRole then
+            line = line .. " |cFF00FF00(Current)|r"
+        end
+        tooltip:AddLine(line)
+    end
+end
+
 local function AddScoreToTooltip(tooltip)
     if not tooltip or tooltip.octoPawnScored then return end
     tooltip.octoPawnScored = true
     local score, results = OctoPawn_ScoreTooltip(tooltip)
     if not results or table.getn(results) == 0 then return end
+
     tooltip:AddLine(" ")
-    tooltip:AddLine("|cFF00FF00OP Score: " .. string.format("%.1f", score) .. "|r")
-    if OctoPawn_ShowComparison then OctoPawn_ShowComparison(tooltip, score) end
+    if OctoPawnDB and OctoPawnDB.showAllSpecs then
+        AddAllSpecsToTooltip(tooltip)
+    else
+        tooltip:AddLine("|cFF00FF00OP Score: " .. string.format("%.1f", score) .. "|r")
+        if OctoPawn_ShowComparison then OctoPawn_ShowComparison(tooltip, score) end
+    end
     tooltip:Show()
 end
 
