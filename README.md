@@ -4,8 +4,6 @@ A lightweight item scoring and comparison addon built for OctoWoW.
 
 OctoPawn reads the stats on gear and gives you a clear **OP Score** so you can quickly tell whether something is actually an upgrade for your role. It also keeps an always-on equip comparison that shows how the item stacks up against what you already have equipped.
 
-!\[OctoPawn](Screenshots/OctoPawnScreen.png)
-
 ### Features
 
 * **Role-based scoring** – Pre-made weight sets for every class and common role (Arms, Fury, Protection, Holy, Retribution, Balance, Feral Cat/Bear, Restoration, etc.)
@@ -29,6 +27,8 @@ OctoPawn reads the stats on gear and gives you a clear **OP Score** so you can q
 |`/op help`|Show this help|
 
 You can also open the full config window from the minimap button.
+
+![OctoPawn](Screenshots/OctoPawnScreen.png)
 
 ### Installation
 
