@@ -281,11 +281,24 @@ local function AddAllSpecsToTooltip(tooltip)
     end
 end
 
+-- Last tooltip that successfully received an OP Score (for /op breakdown)
+local lastScoredTooltip = nil
+
 local function AddScoreToTooltip(tooltip)
     if not tooltip or tooltip.octoPawnScored then return end
+    -- Never score our private scan tooltip
+    local name = tooltip.GetName and tooltip:GetName()
+    if name == "OctoPawnScanTooltip" then return end
+
     tooltip.octoPawnScored = true
     local score, results = OctoPawn_ScoreTooltip(tooltip)
-    if not results or table.getn(results) == 0 then return end
+    if not results or table.getn(results) == 0 then
+        -- No stats found yet (lines may still be loading). Allow a later retry.
+        tooltip.octoPawnScored = nil
+        return
+    end
+
+    lastScoredTooltip = tooltip
 
     tooltip:AddLine(" ")
     if OctoPawnDB and OctoPawnDB.showAllSpecs then
@@ -297,12 +310,153 @@ local function AddScoreToTooltip(tooltip)
     tooltip:Show()
 end
 
-local oldOnHide = GameTooltip:GetScript("OnHide")
-GameTooltip:SetScript("OnHide", function()
-    this.octoPawnScored = nil
-    if oldOnHide then oldOnHide() end
+-- Find any currently-visible tooltip that has (or can produce) an item OP Score.
+-- Used by /op so breakdown works on Aux, Atlas-CFM, ItemRef, etc.
+function OctoPawn_GetActiveItemTooltip()
+    -- Prefer the one we most recently scored, if still visible
+    if lastScoredTooltip and lastScoredTooltip:IsVisible() then
+        local _, results = OctoPawn_ScoreTooltip(lastScoredTooltip)
+        if results and table.getn(results) > 0 then
+            return lastScoredTooltip
+        end
+    end
+
+    -- Fall back: scan known tooltip frames for a visible one with item stats
+    local names = {
+        "GameTooltip",
+        "ItemRefTooltip",
+        "AtlasCFMLootTooltip",
+        "AtlasCFMLootTooltip2",
+        "AtlasLootTooltip",
+        "AtlasLootTooltip2",
+        "ShoppingTooltip1",
+        "ShoppingTooltip2",
+        "ComparisonTooltip1",
+        "ComparisonTooltip2",
+        "AtlasTooltip",
+        "LinkWrangler",
+    }
+    local i
+    for i = 1, table.getn(names) do
+        local tip = getglobal(names[i])
+        if tip and tip.IsVisible and tip:IsVisible() and tip.NumLines then
+            local tipName = tip:GetName()
+            if tipName ~= "OctoPawnScanTooltip" then
+                local _, results = OctoPawn_ScoreTooltip(tip)
+                if results and table.getn(results) > 0 then
+                    return tip
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-------------------------------------------------
+-- Universal tooltip registration (OnShow path)
+-- Catches Aux (manual fill), Atlas-CFM custom
+-- frames, ItemRefTooltip, shopping tips, etc.
+-------------------------------------------------
+local registeredTooltips = {}
+
+local function RegisterTooltip(tip)
+    if not tip or type(tip) ~= "table" then return end
+    if registeredTooltips[tip] then return end
+    -- Only GameTooltip-like frames (have NumLines + TextLeft1)
+    if not tip.NumLines or not tip.GetName then return end
+    local tipName = tip:GetName()
+    if not tipName or tipName == "OctoPawnScanTooltip" then return end
+    if not getglobal(tipName .. "TextLeft1") then return end
+
+    registeredTooltips[tip] = true
+
+    local oldShow = tip:GetScript("OnShow")
+    tip:SetScript("OnShow", function()
+        if oldShow then oldShow() end
+        -- Deferred one-frame retry covers addons that Show() before all lines are written
+        if this.octoPawnScored then return end
+        AddScoreToTooltip(this)
+        if not this.octoPawnScored then
+            local f = this
+            local delay = CreateFrame("Frame")
+            local elapsed = 0
+            delay:SetScript("OnUpdate", function()
+                elapsed = elapsed + arg1
+                if elapsed > 0.05 then
+                    delay:SetScript("OnUpdate", nil)
+                    if f and f:IsVisible() and not f.octoPawnScored then
+                        AddScoreToTooltip(f)
+                    end
+                end
+            end)
+        end
+    end)
+
+    local oldHide = tip:GetScript("OnHide")
+    tip:SetScript("OnHide", function()
+        this.octoPawnScored = nil
+        if lastScoredTooltip == this then
+            lastScoredTooltip = nil
+        end
+        if oldHide then oldHide() end
+    end)
+end
+
+-- Known tooltip frame names used by Blizzard + common 1.12 addons
+local KNOWN_TOOLTIP_NAMES = {
+    "GameTooltip",
+    "ItemRefTooltip",
+    "ShoppingTooltip1",
+    "ShoppingTooltip2",
+    "AtlasCFMLootTooltip",
+    "AtlasCFMLootTooltip2",
+    "AtlasLootTooltip",
+    "AtlasLootTooltip2",
+    "AtlasTooltip",
+    "LinkWrangler",
+    "ComparisonTooltip1",
+    "ComparisonTooltip2",
+}
+
+local function RegisterKnownTooltips()
+    local i
+    for i = 1, table.getn(KNOWN_TOOLTIP_NAMES) do
+        local tip = getglobal(KNOWN_TOOLTIP_NAMES[i])
+        if tip then RegisterTooltip(tip) end
+    end
+end
+
+RegisterKnownTooltips()
+
+-- Re-scan after other addons load (Atlas-CFM, Aux, etc. may create frames late)
+local regFrame = CreateFrame("Frame")
+regFrame:RegisterEvent("ADDON_LOADED")
+regFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+regFrame:SetScript("OnEvent", function()
+    RegisterKnownTooltips()
 end)
 
+-- Lightweight periodic discovery for late-created custom tooltips (first 30s only)
+do
+    local discover = CreateFrame("Frame")
+    local t = 0
+    local ticks = 0
+    discover:SetScript("OnUpdate", function()
+        t = t + arg1
+        if t < 2 then return end
+        t = 0
+        ticks = ticks + 1
+        RegisterKnownTooltips()
+        if ticks >= 15 then
+            discover:SetScript("OnUpdate", nil)
+        end
+    end)
+end
+
+-------------------------------------------------
+-- Keep classic Set* hooks for itemLink + early score
+-- (still the fastest path for bags / paperdoll / links)
+-------------------------------------------------
 local function hook(method, after)
     local orig = GameTooltip[method]
     if not orig then return end
@@ -333,5 +487,18 @@ if GameTooltip.SetAuctionSellItem then hook("SetAuctionSellItem") end
 if GameTooltip.SetLootRollItem then hook("SetLootRollItem") end
 if GameTooltip.SetQuestItem then hook("SetQuestItem") end
 if GameTooltip.SetQuestLogItem then hook("SetQuestLogItem") end
+if GameTooltip.SetMerchantItem then
+    hook("SetMerchantItem", function(self, slot)
+        if GetMerchantItemLink then self.itemLink = GetMerchantItemLink(slot) end
+    end)
+end
+if GameTooltip.SetLootItem then
+    hook("SetLootItem", function(self, slot)
+        if GetLootSlotLink then self.itemLink = GetLootSlotLink(slot) end
+    end)
+end
+if GameTooltip.SetInboxItem then hook("SetInboxItem") end
+if GameTooltip.SetTradeSkillItem then hook("SetTradeSkillItem") end
+if GameTooltip.SetCraftItem then hook("SetCraftItem") end
 
 print("|cFF00FF00OctoPawn|r scoring core loaded")

@@ -42,12 +42,24 @@ SlashCmdList["OCTOPAWN"] = function(msg)
         end
         return
     end
-    if not GameTooltip or not GameTooltip:IsShown() then
+    -- Prefer any visible tooltip that already has (or can produce) an OP Score
+    -- (GameTooltip, AtlasCFMLootTooltip, ItemRefTooltip, Aux-filled tips, etc.)
+    local tip = OctoPawn_GetActiveItemTooltip and OctoPawn_GetActiveItemTooltip() or nil
+    if not tip then
+        if GameTooltip and GameTooltip:IsShown() then
+            tip = GameTooltip
+        end
+    end
+    if not tip then
         DEFAULT_CHAT_FRAME:AddMessage("|cFFFF0000OctoPawn: Hover an item first.|r")
         return
     end
-    local score, results = OctoPawn_ScoreTooltip(GameTooltip)
-    local name = OctoPawn_TooltipItemName and OctoPawn_TooltipItemName(GameTooltip) or "Item"
+    local score, results = OctoPawn_ScoreTooltip(tip)
+    if not results or table.getn(results) == 0 then
+        DEFAULT_CHAT_FRAME:AddMessage("|cFFFF0000OctoPawn: No item stats on the current tooltip.|r")
+        return
+    end
+    local name = OctoPawn_TooltipItemName and OctoPawn_TooltipItemName(tip) or "Item"
     OctoPawn_PrintBreakdown(name, score, results)
 end
 print("|cFF00FF00OctoPawn|r commands loaded")
